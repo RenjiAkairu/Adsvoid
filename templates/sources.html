@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Manage Blocklist Sources</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .source-form {
+            margin-bottom: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .source-list {
+            margin-top: 20px;
+        }
+        .source-item {
+            padding: 15px;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .source-actions {
+            margin-top: 10px;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+        }
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← Back to Dashboard</a>
+        <h1>Manage Blocklist Sources</h1>
+        
+        <div class="source-form">
+            <h2>Add New Source</h2>
+            <form action="/sources/add" method="POST">
+                <div class="input-group">
+                    <label>URL:</label>
+                    <input type="text" name="url" placeholder="https://example.com/hosts.txt" required>
+                </div>
+                <div class="input-group">
+                    <label>Name (optional):</label>
+                    <input type="text" name="name" placeholder="My Custom Blocklist">
+                </div>
+                <button type="submit" class="btn">Add Source</button>
+            </form>
+        </div>
+
+        <!-- Add this right after the "Add Source" form in sources.html -->
+        <div class="management-actions" style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+            <h3>Database Management</h3>
+            <form action="/sources/cleanup" method="POST" style="display: inline;">
+                <button type="submit" class="btn" onclick="return confirm('Are you sure you want to clean up the database?')">
+                    Cleanup Database
+                </button>
+            </form>
+        </div>
+
+        <div class="source-list">
+            <h2>Current Sources</h2>
+            {% for source in sources %}
+            <div class="source-item">
+                <h3>{{ source.name }}</h3>
+                <p>URL: {{ source.url }}</p>
+                <p>Status: {{ "Enabled" if source.enabled else "Disabled" }}</p>
+                {% if source.last_update %}
+                <p>Last Update: {{ source.last_update }}</p>
+                <p>Total Domains: {{ source.total_domains }}</p>
+                {% endif %}
+                <div class="source-actions">
+                    <form style="display: inline" action="/sources/toggle/{{ source.id }}" method="POST">
+                        <button type="submit" class="btn">
+                            {{ "Disable" if source.enabled else "Enable" }}
+                        </button>
+                    </form>
+                    <form style="display: inline" action="/sources/delete/{{ source.id }}" method="POST">
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
