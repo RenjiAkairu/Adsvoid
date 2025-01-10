@@ -2,6 +2,15 @@
 
 A DNS-based ad-blocking system with web interface for managing block lists.
 
+## Features
+- Web dashboard for managing block lists
+- System monitoring (CPU, RAM, Disk usage)
+- Real-time statistics and graphs
+- Automatic updates every 24 hours
+- Support for multiple blocklist formats
+- Enable/disable specific sources
+- Logging system with 90-day retention
+
 ## Requirements
 - Python 3.8 or higher
 - MySQL Server 8.0 or higher

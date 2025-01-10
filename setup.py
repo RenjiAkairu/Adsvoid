@@ -32,6 +32,20 @@ def check_mysql():
     except:
         return False
 
+def check_requirements():
+    try:
+        import psutil  # Add psutil check
+        print("System monitoring requirements OK")
+        return True
+    except ImportError:
+        print("Missing psutil module. Installing...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
+            return True
+        except:
+            print("Failed to install psutil")
+            return False
+
 def setup_environment():
     if not is_admin():
         print("Please run this script with administrator privileges!")
@@ -43,11 +57,16 @@ def setup_environment():
             f.write("""flask==2.0.1
 mysql-connector-python==8.0.26
 requests==2.26.0
-schedule==1.1.0""")
+schedule==1.1.0
+psutil==5.9.0""")
 
     # Install requirements
     if not install_requirements():
         print("Failed to install Python requirements")
+        return False
+
+    # Check additional requirements
+    if not check_requirements():
         return False
 
     # Check MySQL
