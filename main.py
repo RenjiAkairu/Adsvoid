@@ -12,6 +12,9 @@ import config
 from flask import Flask, render_template, request, redirect, url_for
 import signal
 import sys
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import os
 
 # Move DNSQuery class definition inside DNSServer to ensure it's accessible
 class DNSServer:
@@ -82,30 +85,35 @@ class DNSServer:
         try:
             # Parse the query
             query = self.DNSQuery(data)
+            client_ip = addr[0] if hasattr(self, 'last_client') else 'unknown'
             
             # Check if domain is blocked
             if self.is_domain_blocked(query.domain):
                 print(f"Blocking domain: {query.domain}")
+                # Log blocked request
+                dns_logger.info(f"BLOCKED - Client: {client_ip}, Domain: {query.domain}")
                 return query.response(self.blocked_ip)
             
             # Forward to upstream DNS
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(1)  # Reduced timeout to 1 second
+            sock.settimeout(1)
             
             try:
-                # Send to Google DNS
                 sock.sendto(data, self.upstream_dns)
                 response, _ = sock.recvfrom(4096)
+                # Log allowed request
+                dns_logger.info(f"ALLOWED - Client: {client_ip}, Domain: {query.domain}")
                 return response
             except socket.timeout:
                 print(f"Timeout forwarding {query.domain}, blocking")
+                dns_logger.warning(f"TIMEOUT - Client: {client_ip}, Domain: {query.domain}")
                 return query.response(self.blocked_ip)
             finally:
                 sock.close()
                 
         except Exception as e:
             print(f"Error handling request: {e}")
-            # Return blocked response in case of any error
+            dns_logger.error(f"ERROR - Client: {client_ip}, Domain: {query.domain}, Error: {str(e)}")
             query = self.DNSQuery(data)
             return query.response(self.blocked_ip)
 
@@ -422,6 +430,41 @@ def signal_handler(sig, frame):
     print("Shutdown complete!")
     sys.exit(0)
 
+def setup_logging():
+    # Create logs directory if it doesn't exist
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    
+    # DNS request logger
+    dns_logger = logging.getLogger('dns_log')
+    dns_logger.setLevel(logging.INFO)
+    dns_handler = TimedRotatingFileHandler(
+        'logs/dns_requests.log',
+        when='D',  # Daily rotation
+        interval=1,
+        backupCount=90  # Keep 90 days of logs
+    )
+    dns_format = logging.Formatter('%(asctime)s - %(message)s')
+    dns_handler.setFormatter(dns_format)
+    dns_logger.addHandler(dns_handler)
+    
+    # Source management logger
+    source_logger = logging.getLogger('source_log')
+    source_logger.setLevel(logging.INFO)
+    source_handler = TimedRotatingFileHandler(
+        'logs/source_management.log',
+        when='D',
+        interval=1,
+        backupCount=90
+    )
+    source_format = logging.Formatter('%(asctime)s - %(message)s')
+    source_handler.setFormatter(source_format)
+    source_logger.addHandler(source_handler)
+    
+    return dns_logger, source_logger
+
+
+
 # Register signals
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
@@ -477,12 +520,7 @@ def add_source():
         return "URL is required", 400
         
     try:
-        conn = mysql.connector.connect(
-            host=config.DB_HOST,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD,
-            database=config.DB_NAME
-        )
+        conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO blocklist_sources (url, name)
@@ -491,77 +529,65 @@ def add_source():
         conn.commit()
         conn.close()
         
+        # Log source addition
+        source_logger.info(f"Source Added - Name: {name}, URL: {url}")
+        
         # Update blocklist immediately
         update_blocklist()
         return redirect(url_for('list_sources'))
     except mysql.connector.Error as err:
+        source_logger.error(f"Error Adding Source - Name: {name}, URL: {url}, Error: {str(err)}")
         return f"Database error: {err}", 500
 
 @app.route('/sources/delete/<int:source_id>', methods=['POST'])
 def delete_source(source_id):
     try:
-        conn = mysql.connector.connect(
-            host=config.DB_HOST,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD,
-            database=config.DB_NAME
-        )
+        conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
-
-        # First, get the domains from this source
-        cursor.execute("""
-            CREATE TEMPORARY TABLE temp_domains AS
-            SELECT DISTINCT domain
-            FROM blocked_domains
-            WHERE domain IN (
-                SELECT domain FROM blocked_domains d
-                WHERE EXISTS (
-                    SELECT 1 FROM blocklist_sources s
-                    WHERE s.id = %s
-                    AND d.date_added >= s.last_update
-                    AND d.date_added <= DATE_ADD(s.last_update, INTERVAL 1 MINUTE)
-                )
-            )
-        """, (source_id,))
-
-        # Delete the domains that are only from this source
-        cursor.execute("""
-            DELETE FROM blocked_domains 
-            WHERE domain IN (SELECT domain FROM temp_domains)
-        """)
-
-        # Delete the source
+        
+        # Get source info for logging
+        cursor.execute("SELECT name, url FROM blocklist_sources WHERE id = %s", (source_id,))
+        source_info = cursor.fetchone()
+        
+        # Delete source
         cursor.execute("DELETE FROM blocklist_sources WHERE id = %s", (source_id,))
-        
-        # Reset auto increment if needed
-        cursor.execute("ALTER TABLE blocklist_sources AUTO_INCREMENT = 1")
-        
         conn.commit()
-        conn.close()
+        
+        # Log source deletion
+        if source_info:
+            source_logger.info(f"Source Deleted - Name: {source_info[0]}, URL: {source_info[1]}")
+            
         return redirect(url_for('list_sources'))
     except mysql.connector.Error as err:
-        print(f"Error deleting source: {err}")
+        source_logger.error(f"Error Deleting Source ID: {source_id}, Error: {str(err)}")
         return f"Database error: {err}", 500
 
 @app.route('/sources/toggle/<int:source_id>', methods=['POST'])
 def toggle_source(source_id):
     try:
-        conn = mysql.connector.connect(
-            host=config.DB_HOST,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD,
-            database=config.DB_NAME
-        )
+        conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
+        
+        # Get current state
+        cursor.execute("SELECT name, url, enabled FROM blocklist_sources WHERE id = %s", (source_id,))
+        source_info = cursor.fetchone()
+        
+        # Toggle state
         cursor.execute("""
             UPDATE blocklist_sources 
             SET enabled = NOT enabled 
             WHERE id = %s
         """, (source_id,))
         conn.commit()
-        conn.close()
+        
+        # Log state change
+        if source_info:
+            new_state = "Enabled" if not source_info[2] else "Disabled"
+            source_logger.info(f"Source {new_state} - Name: {source_info[0]}, URL: {source_info[1]}")
+            
         return redirect(url_for('list_sources'))
     except mysql.connector.Error as err:
+        source_logger.error(f"Error Toggling Source ID: {source_id}, Error: {str(err)}")
         return f"Database error: {err}", 500
 
 # Add this route to trigger cleanup manually
@@ -570,10 +596,52 @@ def trigger_cleanup():
     cleanup_domains()
     return redirect(url_for('list_sources'))
 
+@app.route('/logs')
+def view_logs():
+    # Get search parameters
+    date = request.args.get('date', '')
+    domain = request.args.get('domain', '')
+    client_ip = request.args.get('client_ip', '')
+    log_type = request.args.get('type', 'dns')  # 'dns' or 'source'
+    
+    try:
+        logs = []
+        log_file = 'logs/dns_requests.log' if log_type == 'dns' else 'logs/source_management.log'
+        
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                for line in f:
+                    # Filter based on search criteria
+                    if date and date not in line:
+                        continue
+                    if domain and domain.lower() not in line.lower():
+                        continue
+                    if client_ip and client_ip not in line:
+                        continue
+                    logs.append(line.strip())
+        
+        # Get last 100 logs by default if no search criteria
+        if not any([date, domain, client_ip]):
+            logs = logs[-100:]
+            
+        return render_template('logs.html', 
+                             logs=logs,
+                             date=date,
+                             domain=domain,
+                             client_ip=client_ip,
+                             log_type=log_type)
+    except Exception as e:
+        return f"Error reading logs: {str(e)}", 500
+
+        
+
 # Then put your if __name__ == "__main__": block here
 if __name__ == "__main__":
     print("Setting up Adsvoid...")
     
+    # Setup logging
+    dns_logger, source_logger = setup_logging()
+
     if setup_database():
         print("Initial blocklist update starting...")
         update_blocklist()
