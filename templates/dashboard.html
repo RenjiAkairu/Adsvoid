@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Adsvoid Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -10,12 +11,18 @@
             background-color: #f5f5f5;
         }
         .container {
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
             background-color: white;
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
         }
         .stat-card {
             background-color: #007bff;
@@ -23,12 +30,27 @@
             padding: 20px;
             border-radius: 8px;
             text-align: center;
-            margin-top: 20px;
         }
         .stat-number {
             font-size: 2em;
             font-weight: bold;
             margin: 10px 0;
+        }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .chart-card {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .resource-gauge {
+            position: relative;
+            height: 150px;
         }
         .btn {
             display: inline-block;
@@ -39,20 +61,138 @@
             border-radius: 4px;
             margin-top: 20px;
         }
-        .btn:hover {
-            background-color: #0056b3;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Adsvoid Dashboard</h1>
-        <div class="stat-card">
-            <h2>Total Blocked Domains</h2>
-            <div class="stat-number">{{ total_domains }}</div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h2>Domains on Adlists</h2>
+                <div class="stat-number" id="domains-total">{{ domains_total }}</div>
+            </div>
+            
+            <div class="stat-card" style="background-color: #dc3545;">
+                <h2>Queries Blocked (24h)</h2>
+                <div class="stat-number" id="queries-blocked">{{ query_stats.blocked }}</div>
+            </div>
+            
+            <div class="stat-card" style="background-color: #28a745;">
+                <h2>Queries Allowed (24h)</h2>
+                <div class="stat-number" id="queries-allowed">{{ query_stats.allowed }}</div>
+            </div>
         </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>System Resources</h3>
+                <div style="height: 300px;">
+                    <canvas id="resourcesChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>Query Statistics</h3>
+                <div style="height: 300px;">
+                    <canvas id="queryChart"></canvas>
+                </div>
+            </div>
+        </div>
+
         <a href="/sources" class="btn">Manage Sources</a>
         <a href="/logs" class="btn">View Logs</a>
     </div>
+
+    <script>
+        let resourcesChart, queryChart;
+
+        function initCharts() {
+            // System Resources Chart
+            const ctx1 = document.getElementById('resourcesChart').getContext('2d');
+            resourcesChart = new Chart(ctx1, {
+                type: 'bar',
+                data: {
+                    labels: ['CPU', 'RAM', 'Disk'],
+                    datasets: [{
+                     label: 'Usage %',
+                        data: [
+                            {{ system_stats.cpu_percent or 0 }},
+                            {{ system_stats.ram_percent or 0 }},
+                            {{ system_stats.disk_percent or 0 }}
+                        ],
+                        backgroundColor: [
+                            '#007bff',
+                            '#28a745',
+                            '#ffc107'
+                        ]
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    },
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+
+            // Query Statistics Chart
+            const ctx2 = document.getElementById('queryChart').getContext('2d');
+            queryChart = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Blocked', 'Allowed'],
+                    datasets: [{
+                        data: [
+                            {{ query_stats.blocked or 0 }},
+                            {{ query_stats.allowed or 0 }}
+                        ],
+                     backgroundColor: [
+                            '#dc3545',
+                            '#28a745'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+
+        // Initialize charts when page loads
+        window.addEventListener('load', initCharts);
+
+        // Auto refresh stats every 30 seconds
+        setInterval(() => {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    // Update charts data
+                    resourcesChart.data.datasets[0].data = [
+                        data.system_stats.cpu_percent,
+                        data.system_stats.ram_percent,
+                        data.system_stats.disk_percent
+                    ];
+                    resourcesChart.update();
+
+                    queryChart.data.datasets[0].data = [
+                        data.query_stats.blocked,
+                        data.query_stats.allowed
+                    ];
+                    queryChart.update();
+
+                    // Update stat numbers
+                    document.getElementById('domains-total').textContent = data.domains_total;
+                    document.getElementById('queries-blocked').textContent = data.query_stats.blocked || 'None';
+                    document.getElementById('queries-allowed').textContent = data.query_stats.allowed || 'None';
+                })
+                .catch(console.error);
+        }, 30000);
+    </script>
 </body>
 </html>

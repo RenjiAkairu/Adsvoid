@@ -9,12 +9,14 @@ from datetime import datetime
 import socket
 import struct
 import config
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 import signal
 import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
+import psutil
+import math
 
 # Move DNSQuery class definition inside DNSServer to ensure it's accessible
 class DNSServer:
@@ -198,6 +200,21 @@ def setup_database():
                 FOREIGN KEY (domain_id) REFERENCES blocked_domains(id),
                 FOREIGN KEY (source_id) REFERENCES blocklist_sources(id),
                 PRIMARY KEY (domain_id, source_id)
+            )
+        """)
+
+        # Add DNS logs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dns_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                log_entry TEXT,
+                domain VARCHAR(255),
+                client_ip VARCHAR(45),
+                action ENUM('BLOCKED', 'ALLOWED', 'ERROR') NOT NULL,
+                INDEX idx_timestamp (timestamp),
+                INDEX idx_domain (domain),
+                INDEX idx_action (action)
             )
         """)
         
@@ -463,6 +480,45 @@ def setup_logging():
     
     return dns_logger, source_logger
 
+def get_system_stats():
+    """Get system resource usage"""
+    try:
+        # CPU Usage
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Memory Usage
+        mem = psutil.virtual_memory()
+        ram_percent = mem.percent
+        ram_used = f"{math.floor(mem.used/1024/1024)} MB"
+        ram_total = f"{math.floor(mem.total/1024/1024)} MB"
+        
+        # Disk Usage
+        disk = psutil.disk_usage('/')
+        disk_percent = disk.percent
+        disk_used = f"{math.floor(disk.used/1024/1024/1024)} GB"
+        disk_total = f"{math.floor(disk.total/1024/1024/1024)} GB"
+        
+        return {
+            'cpu_percent': cpu_percent,
+            'ram_percent': ram_percent,
+            'ram_used': ram_used,
+            'ram_total': ram_total,
+            'disk_percent': disk_percent,
+            'disk_used': disk_used,
+            'disk_total': disk_total
+        }
+    except Exception as e:
+        print(f"Error getting system stats: {e}")
+        return {
+            'cpu_percent': 0,
+            'ram_percent': 0,
+            'ram_used': '0 MB',
+            'ram_total': '0 MB',
+            'disk_percent': 0,
+            'disk_used': '0 GB',
+            'disk_total': '0 GB'
+        }
+
 
 
 # Register signals
@@ -481,14 +537,44 @@ def dashboard():
             password=config.DB_PASSWORD,
             database=config.DB_NAME
         )
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM blocked_domains")
-        total_domains = cursor.fetchone()[0]
+        cursor = conn.cursor(dictionary=True)
+        
+        # Get domains on adlists
+        cursor.execute("SELECT COUNT(*) as total FROM blocked_domains")
+        domains_total = cursor.fetchone()['total']
+        
+        # Get query statistics
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                COALESCE(SUM(CASE WHEN action = 'BLOCKED' THEN 1 ELSE 0 END), 0) as blocked,
+                COALESCE(SUM(CASE WHEN action = 'ALLOWED' THEN 1 ELSE 0 END), 0) as allowed
+            FROM dns_logs
+            WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        """)
+        query_stats = cursor.fetchone()
+        if query_stats is None:
+            query_stats = {
+                'total': 0,
+                'blocked': 0,
+                'allowed': 0
+            }
+        
+        # Get system stats
+        system_stats = get_system_stats()
+        
         conn.close()
-        return render_template('dashboard.html', total_domains=total_domains)
+        return render_template('dashboard.html',
+                             domains_total=domains_total,
+                             query_stats=query_stats,
+                             system_stats=system_stats)
     except mysql.connector.Error as err:
         print(f"Error getting statistics: {err}")
-        return "Database error occurred", 500
+        # Return default values on error
+        return render_template('dashboard.html',
+                             domains_total=0,
+                             query_stats={'total': 0, 'blocked': 0, 'allowed': 0},
+                             system_stats=get_system_stats())
 
 @app.route('/sources')
 def list_sources():
@@ -633,7 +719,48 @@ def view_logs():
     except Exception as e:
         return f"Error reading logs: {str(e)}", 500
 
+
+
+@app.route('/api/stats')
+def get_stats():
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor(dictionary=True)
         
+        # Get domains on adlists
+        cursor.execute("SELECT COUNT(*) as total FROM blocked_domains")
+        domains_total = cursor.fetchone()['total']
+        
+        # Get query statistics
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN action = 'BLOCKED' THEN 1 ELSE 0 END) as blocked,
+                SUM(CASE WHEN action = 'ALLOWED' THEN 1 ELSE 0 END) as allowed
+            FROM dns_logs
+            WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        """)
+        query_stats = cursor.fetchone()
+        
+        # Get system stats
+        system_stats = get_system_stats()
+        
+        conn.close()
+        
+        return jsonify({
+            'domains_total': domains_total,
+            'query_stats': query_stats,
+            'system_stats': system_stats
+        })
+    except mysql.connector.Error as err:
+        return jsonify({'error': str(err)}), 500
+
+
 
 # Then put your if __name__ == "__main__": block here
 if __name__ == "__main__":
