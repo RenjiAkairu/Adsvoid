@@ -69,6 +69,7 @@ adsvoid/
 ├── setup.py         # Installation helper
 ├── templates/       # Web interface
 │   ├── dashboard.html
+|   ├── logs.html
 │   └── sources.html
 └── README.md
 ```
