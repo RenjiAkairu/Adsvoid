@@ -1,3 +1,37 @@
+# Project Notice
+
+This software, Adsvoid (Ad-Blocking System), was developed as
+a graduation project at Rajamangala University of Technology Thanyaburi by:
+- Warakorn Sithijansen
+- Arunyawa Aromdee
+- Tipwaree Tipakron
+[Year of Completion: 2024]
+
+## Educational Background
+This project was created as part of our academic requirements
+for Bachelor of Science Program in Information Technology and Digital
+Communication. It represents our research and implementation
+of network-level ad-blocking technologies, focusing on improving
+user privacy and network performance.
+
+## Project Status
+This is an academic implementation intended primarily for educational
+and research purposes. While fully functional, it may require
+additional testing and optimization for production environments.
+
+## Academic Acknowledgment
+If you use this project for academic purposes or reference it in research, please cite:
+Warakorrn Sithijansen. (2024). Adsvoid: Network-Level Ad-Blocking System Adsvoid.
+Rajamangala University of Technology Thanyaburi, Department of Mathematics and
+Computer Science/Faculty of Science and Technology.
+
+## Production Use Notice
+While this software is released under the MIT License allowing unrestricted use,
+please note that it was developed in an academic context. Users implementing this
+in production environments should perform their own security and performance evaluations.
+
+---
+
 MIT License
 
 Copyright (c) 2024 RenjiAkairu
