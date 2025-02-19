@@ -1,3 +1,4 @@
+<!-- logs.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -22,10 +23,10 @@
         }
         .log-tabs button {
             padding: 10px 20px;
-            border: none;
-            cursor: pointer;
             margin-right: 10px;
+            border: none;
             border-radius: 4px;
+            cursor: pointer;
         }
         .log-tabs button.active {
             background-color: #007bff;
@@ -36,55 +37,76 @@
             color: #007bff;
         }
         .search-form {
-            background-color: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
             margin-bottom: 20px;
-        }
-        .search-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
-            align-items: end;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
         }
         .form-group {
-            display: flex;
-            flex-direction: column;
+            margin-bottom: 15px;
         }
         .form-group label {
+            display: block;
             margin-bottom: 5px;
-            font-weight: bold;
         }
         .form-group input {
+            width: 100%;
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
-            width: 100%;
         }
-        .button-group {
-            display: flex;
-            gap: 10px;
-        }
-        .btn {
-            padding: 8px 16px;
-            border: none;
+        .logs-container {
+            background-color: #f8f9fa;
+            padding: 20px;
             border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
+            max-height: 500px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
-        .btn-search {
-            background-color: #007bff;
-            color: white;
-        }
-        .btn-clear {
-            background-color: #6c757d;
-            color: white;
+        .log-entry {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            font-family: monospace;
+            white-space: pre-wrap;
+            /* Add a subtle highlight effect for new entries */
+            animation: newEntry 1s ease-out;
         }
         .back-link {
             display: inline-block;
             margin-bottom: 20px;
             color: #007bff;
             text-decoration: none;
+        }
+        .no-logs {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .log-entry:first-child {
+        border-top: 1px solid #ddd;
+        background-color: #f0f8ff;  /* Light blue background for newest entry */
+        }
+
+        @keyframes newEntry {
+            form {
+                background-color: #f0f8ff;
+            }
+            to {
+                background-color: transparent;
+            }
+        }
+
+        /* Style for timestamp inlog entries */
+        .log-entry .timestamp {
+            color: #666;
+            font-size: 10px;
+        }
+
+        /* Add hover effect */
+        .log-entry:hover {
+            background-color: #f5f5f5;
         }
     </style>
 </head>
@@ -94,38 +116,42 @@
         <h1>Log Viewer</h1>
         
         <div class="log-tabs">
-            <button class="active">DNS Logs</button>
-            <button>Source Management Logs</button>
+            <form method="GET" style="display: inline;">
+                <input type="hidden" name="type" value="dns">
+                <button type="submit" class="{{ 'active' if log_type == 'dns' else '' }}">DNS Logs</button>
+            </form>
+            <form method="GET" style="display: inline;">
+                <input type="hidden" name="type" value="source">
+                <button type="submit" class="{{ 'active' if log_type == 'source' else '' }}">Source Management Logs</button>
+            </form>
         </div>
 
-        <form class="search-form">
-            <div class="search-grid">
-                <div class="form-group">
-                    <label for="date">Date:</label>
-                    <input type="date" id="date" name="date">
-                </div>
-                
-                <div class="form-group">
-                    <label for="domain">Domain:</label>
-                    <input type="text" id="domain" name="domain" placeholder="example.com">
-                </div>
-                
-                <div class="form-group">
-                    <label for="client_ip">Client IP:</label>
-                    <input type="text" id="client_ip" name="client_ip" placeholder="192.168.1.100">
-                </div>
-                
-                <div class="form-group">
-                    <div class="button-group">
-                        <button type="submit" class="btn btn-search">Search</button>
-                        <button type="reset" class="btn btn-clear">Clear</button>
-                    </div>
-                </div>
+        <form class="search-form" method="GET">
+            <input type="hidden" name="type" value="{{ log_type }}">
+            <div class="form-group">
+                <label>Date:</label>
+                <input type="date" name="date" value="{{ date }}">
             </div>
+            <div class="form-group">
+                <label>Domain:</label>
+                <input type="text" name="domain" value="{{ domain }}" placeholder="example.com">
+            </div>
+            <div class="form-group">
+                <label>Client IP:</label>
+                <input type="text" name="client_ip" value="{{ client_ip }}" placeholder="192.168.1.100">
+            </div>
+            <button type="submit" style="background-color: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">Search</button>
+            <button type="button" onclick="window.location.href='/logs?type={{ log_type }}'" style="background-color: #6c757d; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Clear</button>
         </form>
 
-        <div class="logs">
-            <!-- Log entries will go here -->
+        <div class="logs-container">
+            {% if logs %}
+                {% for log in logs %}
+                    <div class="log-entry">{{ log }}</div>
+                {% endfor %}
+            {% else %}
+                <div class="no-logs">No logs found for the specified criteria</div>
+            {% endif %}
         </div>
     </div>
 </body>

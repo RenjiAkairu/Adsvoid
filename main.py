@@ -46,9 +46,24 @@ class DNSServer:
     def __init__(self, db_config):
         self.db_config = db_config
         self.blocked_ip = '0.0.0.0'
-        self.upstream_dns = ('8.8.8.8', 53)
+        # Primary DNS servers
+        self.primary_dns = [
+            ('8.8.8.8', 53),    # Google DNS
+            ('1.1.1.1', 53),    # Cloudflare
+        ]
+        # Backup DNS servers
+        self.backup_dns = [
+            ('8.8.4.4', 53),    # Google DNS backup
+            ('1.0.0.1', 53),    # Cloudflare backup
+            ('9.9.9.9', 53),    # Quad9
+        ]
+        self.cache = {}
+        self.cache_timeout = 1800  # 30 minutes cache
+        self.cache_min_timeout = 300  # 5 minutes minimum cache
         self.running = True
         self.udps = None
+        self.max_packet_size = 4096
+        self.query_timeout = 2  # DNS query timeout in seconds
 
     def stop(self):
         """Safely stop the DNS server"""
@@ -82,70 +97,181 @@ class DNSServer:
             print(f"Database error: {err}")
             return False
 
-    def handle_dns_request(self, data):
+    def log_dns_query(self, domain, client_ip, action):
+        """Log DNS query to database and file"""
+        try:
+            # Database logging
+            conn = mysql.connector.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO dns_logs (timestamp, domain, client_ip, action, log_entry)
+                VALUES (NOW(), %s, %s, %s, %s)
+            """, (
+                domain,
+                client_ip,
+                action,
+                f"{action} - Client: {client_ip}, Domain: {domain}"
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            # File logging
+            log_entry = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {action} - Client: {client_ip}, Domain: {domain}"
+            dns_logger.info(log_entry)
+            
+        except mysql.connector.Error as err:
+            print(f"Database logging error: {err}")
+            # Ensure file logging still works even if database fails
+            log_entry = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {action} - Client: {client_ip}, Domain: {domain}"
+            dns_logger.info(log_entry)
+                
+    def handle_dns_request(self, data, addr):
         """Handle a single DNS request"""
         try:
-            # Parse the query
             query = self.DNSQuery(data)
-            client_ip = addr[0] if hasattr(self, 'last_client') else 'unknown'
+            client_ip = addr[0]
+            
+            print(f"Processing query for {query.domain} from {client_ip}")
+            
+            # Check cache first
+            cached = self.check_cache(query.domain)
+            if cached:
+                print(f"Cache hit for {query.domain}")
+                self.log_dns_query(query.domain, client_ip, 'CACHED')
+                return cached
             
             # Check if domain is blocked
             if self.is_domain_blocked(query.domain):
                 print(f"Blocking domain: {query.domain}")
-                # Log blocked request
-                dns_logger.info(f"BLOCKED - Client: {client_ip}, Domain: {query.domain}")
-                return query.response(self.blocked_ip)
+                response = query.response(self.blocked_ip)
+                self.update_cache(query.domain, response)
+                self.log_dns_query(query.domain, client_ip, 'BLOCKED')
+                return response
             
-            # Forward to upstream DNS
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(1)
+            # Try primary DNS servers first
+            response = self.query_dns_servers(data, self.primary_dns)
+            if response:
+                self.update_cache(query.domain, response)
+                self.log_dns_query(query.domain, client_ip, 'ALLOWED')
+                return response
             
+            # If primary servers fail, try backup servers
+            response = self.query_dns_servers(data, self.backup_dns)
+            if response:
+                self.update_cache(query.domain, response)
+                self.log_dns_query(query.domain, client_ip, 'ALLOWED')
+                return response
+            
+            # If all servers fail, return error response
+            print(f"All DNS servers failed for {query.domain}")
+            self.log_dns_query(query.domain, client_ip, 'ERROR')
+            return query.response(self.blocked_ip)
+            
+        except Exception as e:
+            print(f"Error processing DNS request: {e}")
+            return query.response(self.blocked_ip)
+        
+    def query_dns_servers(self, data, dns_servers):
+        """Query a list of DNS servers until successful response"""
+        for dns_server in dns_servers:
             try:
-                sock.sendto(data, self.upstream_dns)
-                response, _ = sock.recvfrom(4096)
-                # Log allowed request
-                dns_logger.info(f"ALLOWED - Client: {client_ip}, Domain: {query.domain}")
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(self.query_timeout)
+                sock.sendto(data, dns_server)
+                response, _ = sock.recvfrom(self.max_packet_size)
                 return response
             except socket.timeout:
-                print(f"Timeout forwarding {query.domain}, blocking")
-                dns_logger.warning(f"TIMEOUT - Client: {client_ip}, Domain: {query.domain}")
-                return query.response(self.blocked_ip)
+                print(f"Timeout from DNS server {dns_server[0]}")
+                continue
+            except Exception as e:
+                print(f"Error querying DNS server {dns_server[0]}: {e}")
+                continue
             finally:
                 sock.close()
+        return None
+    
+    def update_cache(self, domain, response):
+        """Update DNS cache with new response"""
+        self.cache[domain] = {
+            'response': response,
+            'timestamp': time.time(),
+            'hits': 0
+        }
+
+    def check_cache(self, domain):
+        """Check if domain is in cache and not expired"""
+        if domain in self.cache:
+            entry = self.cache[domain]
+            current_time = time.time()
+            age = current_time - entry['timestamp']
+            
+            # Update cache hits
+            entry['hits'] = entry['hits'] + 1
+            
+            # Extend cache time for frequently accessed domains
+            if entry['hits'] > 10:
+                timeout = self.cache_timeout
+            else:
+                timeout = self.cache_min_timeout
                 
-        except Exception as e:
-            print(f"Error handling request: {e}")
-            dns_logger.error(f"ERROR - Client: {client_ip}, Domain: {query.domain}, Error: {str(e)}")
-            query = self.DNSQuery(data)
-            return query.response(self.blocked_ip)
+            if age < timeout:
+                return entry['response']
+            else:
+                del self.cache[domain]
+        return None
 
     def run_server(self):
+        """Run the DNS server"""
         print("Starting DNS Server...")
-        try:
-            self.udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # Add this to ensure port is released on restart
-            self.udps.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.udps.bind(('', 53))
-            self.udps.settimeout(0.1)
+        while self.running:
+            try:
+                if self.udps is None:
+                    self.udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self.udps.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    try:
+                        self.udps.bind(('', 53))
+                        print("Successfully bound to port 53")
+                    except PermissionError:
+                        print("Error: Permission denied. Make sure you run as administrator/root")
+                        return
+                    except socket.error as e:
+                        print(f"Socket error: {e}")
+                        print("Make sure no other DNS server is running on port 53")
+                        return
+                    
+                    self.udps.settimeout(0.5)
 
-            while self.running:
                 try:
-                    data, addr = self.udps.recvfrom(1024)
+                    data, addr = self.udps.recvfrom(self.max_packet_size)
                     if not self.running:
                         break
-                    response = self.handle_dns_request(data)
-                    self.udps.sendto(response, addr)
+                        
+                    response = self.handle_dns_request(data, addr)
+                    if response:
+                        self.udps.sendto(response, addr)
+                        
                 except socket.timeout:
                     continue
+                except ConnectionResetError:
+                    print("Connection reset. Recreating socket...")
+                    self.udps = None
+                    continue
                 except Exception as e:
+                    print(f"Error in main loop: {e}")
                     if self.running:
-                        print(f"Error in main loop: {e}")
+                        time.sleep(1)
 
-        except Exception as e:
-            print(f"DNS Server error: {e}")
-        finally:
-            self.stop()
-            print("DNS Server stopped.")
+            except Exception as e:
+                print(f"Critical error: {e}")
+                if self.running:
+                    time.sleep(1)
+                    self.udps = None
+
+        if self.udps:
+            self.udps.close()
+        print("DNS Server stopped.")
             
 def setup_database():
     """Create the database and tables if they don't exist"""
@@ -158,18 +284,12 @@ def setup_database():
         )
         cursor = conn.cursor()
         
-        # Create database
+        # Create database if it doesn't exist
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {config.DB_NAME}")
-        conn.close()
+        cursor.execute(f"USE {config.DB_NAME}")  # Select the database first
         
-        # Connect to our new database
-        conn = mysql.connector.connect(
-            host=config.DB_HOST,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD,
-            database=config.DB_NAME
-        )
-        cursor = conn.cursor()
+        # Drop the existing dns_logs table if it exists
+        cursor.execute("DROP TABLE IF EXISTS dns_logs")
         
         # Create tables
         cursor.execute("""
@@ -180,7 +300,6 @@ def setup_database():
             )
         """)
 
-        # Create blocklist sources table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS blocklist_sources (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -192,7 +311,6 @@ def setup_database():
             )
         """)
 
-        # Add new table to track which domains came from which sources
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS domain_sources (
                 domain_id INT,
@@ -203,15 +321,15 @@ def setup_database():
             )
         """)
 
-        # Add DNS logs table
+        # Create dns_logs table with correct ENUM values
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS dns_logs (
+            CREATE TABLE dns_logs (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 log_entry TEXT,
                 domain VARCHAR(255),
                 client_ip VARCHAR(45),
-                action ENUM('BLOCKED', 'ALLOWED', 'ERROR') NOT NULL,
+                action ENUM('BLOCKED', 'ALLOWED', 'ERROR', 'CACHED', 'localhost') NOT NULL,
                 INDEX idx_timestamp (timestamp),
                 INDEX idx_domain (domain),
                 INDEX idx_action (action)
@@ -448,35 +566,44 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 def setup_logging():
+    """Setup logging configuration"""
     # Create logs directory if it doesn't exist
     if not os.path.exists('logs'):
         os.makedirs('logs')
-    
-    # DNS request logger
+
+    # Configure DNS logger
     dns_logger = logging.getLogger('dns_log')
     dns_logger.setLevel(logging.INFO)
+    
+    # File handler for DNS logs
     dns_handler = TimedRotatingFileHandler(
         'logs/dns_requests.log',
-        when='D',  # Daily rotation
+        when='midnight',
         interval=1,
-        backupCount=90  # Keep 90 days of logs
+        backupCount=30
     )
     dns_format = logging.Formatter('%(asctime)s - %(message)s')
     dns_handler.setFormatter(dns_format)
     dns_logger.addHandler(dns_handler)
     
-    # Source management logger
+    # Configure source management logger
     source_logger = logging.getLogger('source_log')
     source_logger.setLevel(logging.INFO)
+    
+    # File handler for source management logs
     source_handler = TimedRotatingFileHandler(
         'logs/source_management.log',
-        when='D',
+        when='midnight',
         interval=1,
-        backupCount=90
+        backupCount=30
     )
     source_format = logging.Formatter('%(asctime)s - %(message)s')
     source_handler.setFormatter(source_format)
     source_logger.addHandler(source_handler)
+    
+    # Make sure both loggers don't propagate to root logger
+    dns_logger.propagate = False
+    source_logger.propagate = False
     
     return dns_logger, source_logger
 
@@ -518,6 +645,14 @@ def get_system_stats():
             'disk_used': '0 GB',
             'disk_total': '0 GB'
         }
+    
+def log_source_action(action, name, url, status=""):
+    """Log source management actions"""
+    try:
+        log_entry = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {action} - Name: {name}, URL: {url} {status}"
+        source_logger.info(log_entry)
+    except Exception as e:
+        print(f"Error logging source action: {e}")
 
 
 
@@ -527,6 +662,8 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Create the Flask web application
 app = Flask(__name__)
+
+# In main.py, replace the existing @app.route('/') function
 
 @app.route('/')
 def dashboard():
@@ -570,7 +707,6 @@ def dashboard():
                              system_stats=system_stats)
     except mysql.connector.Error as err:
         print(f"Error getting statistics: {err}")
-        # Return default values on error
         return render_template('dashboard.html',
                              domains_total=0,
                              query_stats={'total': 0, 'blocked': 0, 'allowed': 0},
@@ -616,13 +752,13 @@ def add_source():
         conn.close()
         
         # Log source addition
-        source_logger.info(f"Source Added - Name: {name}, URL: {url}")
+        log_source_action("ADD", name, url)
         
         # Update blocklist immediately
         update_blocklist()
         return redirect(url_for('list_sources'))
     except mysql.connector.Error as err:
-        source_logger.error(f"Error Adding Source - Name: {name}, URL: {url}, Error: {str(err)}")
+        log_source_action("ADD_ERROR", name, url, f"Error: {str(err)}")
         return f"Database error: {err}", 500
 
 @app.route('/sources/delete/<int:source_id>', methods=['POST'])
@@ -635,17 +771,15 @@ def delete_source(source_id):
         cursor.execute("SELECT name, url FROM blocklist_sources WHERE id = %s", (source_id,))
         source_info = cursor.fetchone()
         
-        # Delete source
-        cursor.execute("DELETE FROM blocklist_sources WHERE id = %s", (source_id,))
-        conn.commit()
-        
-        # Log source deletion
         if source_info:
-            source_logger.info(f"Source Deleted - Name: {source_info[0]}, URL: {source_info[1]}")
+            name, url = source_info
+            log_source_action("DELETE", name, url)
             
-        return redirect(url_for('list_sources'))
+        # Rest of your delete logic...
+        
     except mysql.connector.Error as err:
-        source_logger.error(f"Error Deleting Source ID: {source_id}, Error: {str(err)}")
+        if source_info:
+            log_source_action("DELETE_ERROR", name, url, f"Error: {str(err)}")
         return f"Database error: {err}", 500
 
 @app.route('/sources/toggle/<int:source_id>', methods=['POST'])
@@ -692,12 +826,14 @@ def view_logs():
     
     try:
         logs = []
-        log_file = 'logs/dns_requests.log' if log_type == 'dns' else 'logs/source_management.log'
+        log_file = os.path.join('logs', 'dns_requests.log' if log_type == 'dns' else 'source_management.log')
         
         if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                for line in f:
-                    # Filter based on search criteria
+            with open(log_file, 'r', encoding='utf-8') as f:
+                all_logs = f.readlines()
+                
+                # Apply filters
+                for line in all_logs:
                     if date and date not in line:
                         continue
                     if domain and domain.lower() not in line.lower():
@@ -705,19 +841,30 @@ def view_logs():
                     if client_ip and client_ip not in line:
                         continue
                     logs.append(line.strip())
+                
+                # Get last 100 logs if no filters and reverse them
+                if not any([date, domain, client_ip]):
+                    logs = logs[-100:]
+                
+                # Reverse the logs to show newest first
+                logs.reverse()
         
-        # Get last 100 logs by default if no search criteria
-        if not any([date, domain, client_ip]):
-            logs = logs[-100:]
-            
-        return render_template('logs.html', 
+        # Return the template with logs and search parameters
+        return render_template('logs.html',
                              logs=logs,
                              date=date,
                              domain=domain,
                              client_ip=client_ip,
                              log_type=log_type)
+                             
     except Exception as e:
-        return f"Error reading logs: {str(e)}", 500
+        print(f"Error reading logs: {e}")
+        return render_template('logs.html',
+                             logs=[f"Error reading logs: {str(e)}"],
+                             date=date,
+                             domain=domain,
+                             client_ip=client_ip,
+                             log_type=log_type)
 
 
 

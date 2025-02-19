@@ -35,5 +35,10 @@ ENV/
 Thumbs.db
 
 # Project specific
-*.log
-test.db
+logs/*.log
+*.db
+*.sqlite
+.env
+
+# Keep logs directory
+!logs/.gitkeep

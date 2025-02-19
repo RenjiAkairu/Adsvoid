@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import platform
+import time
 
 def is_admin():
     try:
@@ -10,7 +11,30 @@ def is_admin():
         import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin() != 0  # Windows
 
+def check_port_53():
+    """Check if port 53 is available"""
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('', 53))
+        sock.close()
+        return True
+    except:
+        return False
+
+def stop_dns_client():
+    """Attempt to stop Windows DNS Client service"""
+    if platform.system() == 'Windows':
+        try:
+            subprocess.run(['net', 'stop', 'DNSCache'], check=True)
+            time.sleep(2)  # Wait for service to stop
+            return True
+        except:
+            return False
+    return True
+
 def install_requirements():
+    """Install Python packages from requirements.txt"""
     print("Installing Python requirements...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
@@ -20,63 +44,58 @@ def install_requirements():
         return False
 
 def check_mysql():
+    """Verify MySQL connection and database"""
     try:
         import mysql.connector
+        # Try to connect with default credentials
         conn = mysql.connector.connect(
             host="localhost",
             user="root",
             password="@AD-BlockMaster01"
         )
+        cursor = conn.cursor()
+        
+        # Create database if it doesn't exist
+        cursor.execute("CREATE DATABASE IF NOT EXISTS adsvoid")
+        
         conn.close()
         return True
-    except:
+    except Exception as e:
+        print(f"MySQL Error: {e}")
         return False
 
-def check_requirements():
-    try:
-        import psutil  # Add psutil check
-        print("System monitoring requirements OK")
-        return True
-    except ImportError:
-        print("Missing psutil module. Installing...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
-            return True
-        except:
-            print("Failed to install psutil")
-            return False
-
 def setup_environment():
+    """Setup the complete environment"""
     if not is_admin():
         print("Please run this script with administrator privileges!")
         return False
 
-    # Create requirements.txt if not exists
-    if not os.path.exists("requirements.txt"):
-        with open("requirements.txt", "w") as f:
-            f.write("""flask==2.0.1
-mysql-connector-python==8.0.26
-requests==2.26.0
-schedule==1.1.0
-psutil==5.9.0""")
+    # Check and stop DNS Client if necessary
+    if not check_port_53():
+        print("Port 53 is in use. Attempting to stop DNS Client service...")
+        if not stop_dns_client():
+            print("Failed to free port 53. Please stop any DNS service manually.")
+            return False
 
     # Install requirements
     if not install_requirements():
         print("Failed to install Python requirements")
         return False
 
-    # Check additional requirements
-    if not check_requirements():
-        return False
-
     # Check MySQL
     if not check_mysql():
         print("\nMySQL check failed!")
-        print("Please install MySQL Server and verify these settings:")
+        print("Please ensure MySQL Server is installed with these settings:")
         print("  Host: localhost")
         print("  Username: root")
         print("  Password: @AD-BlockMaster01")
         return False
+
+    # Create logs directory
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+        # Create .gitkeep to maintain directory
+        open('logs/.gitkeep', 'a').close()
 
     return True
 
