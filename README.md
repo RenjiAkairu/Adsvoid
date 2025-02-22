@@ -63,8 +63,8 @@ A DNS-based ad-blocking system with a web dashboard for managing various systems
 ### Alternative Installation Methods
 If you're concerned about antivirus warnings, you can:
 1. Clone the repository and run from source
-2. Build the executable yourself using build.py
-3. Use portable version (if available)
+2. ~~Build the executable yourself using build.py~~
+3. ~~Use portable version (if available)~~
 
 ### Why Does This Happen?
 DNS manipulation software often triggers antivirus warnings because:
