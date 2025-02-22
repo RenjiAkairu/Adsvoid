@@ -1,6 +1,6 @@
 # Adsvoid Ad-Blocker
 
-A DNS-based ad-blocking system similar to Pi-hole, with a web dashboard for managing various systems and monitoring DNS traffic.
+A DNS-based ad-blocking system with a web dashboard for managing various systems and monitoring DNS traffic.
 
 ## Version 1.1.0 Changes
 
@@ -72,8 +72,6 @@ DNS manipulation software often triggers antivirus warnings because:
 - They intercept DNS queries
 - They require administrator privileges
 - They use system-level networking features
-
-Similar software like Pi-hole may trigger the same warnings. This is normal for this type of application.
 
 ## Verifying Your Download
 
