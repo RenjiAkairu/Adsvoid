@@ -124,6 +124,13 @@ You can run Adsvoid directly from Python without building an executable:
 
 This method bypasses antivirus warnings while maintaining full functionality.
 
+## Verifying Your Download
+1. Get the checksum of your downloaded file:
+   - Windows: `Get-FileHash Adsvoid.exe -Algorithm SHA256`
+   - Linux/Mac: `sha256sum Adsvoid.exe`
+2. Compare with the checksum in SHA256SUMS.txt
+3. If they match, the file is authentic
+
 ## Quick Installation
 1. Install MySQL Server
    ```bash
