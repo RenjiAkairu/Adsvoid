@@ -1,17 +1,24 @@
 # Adsvoid Ad-Blocker
 
-A DNS-based ad-blocking system with a web dashboard for managing various systems and monitoring DNS traffic.
+A DNS-based ad-blocking system similar to Pi-hole, with a web dashboard for managing various systems and monitoring DNS traffic.
 
-## Version 1.1.0 Changes
+## What's New In Release (1.2.0) Features
+- Added secure authentication system with login protection
+- Implemented role-based access control (admin and viewer roles)
+- Added user management interface for administrators
+- Added password change functionality for all users
+- Added dropdown navigation menu for improved usability
+- Updated UI with custom branding and logo display
+- Enhanced security with session management
+- Improved source management with permission controls
 
-- Added interactive MySQL credential configuration during setup
-- Added dedicated database user 'AdsvoidAdmin' with restricted privileges
-- Enhanced database security by removing root user dependency
-- Added flexibility to use existing MySQL users with appropriate privileges
-- Added privilege verification during setup process
-- Updated setup process to automatically configure secure database access
+## Previous Release (1.1.0) Features
+- Interactive MySQL credential configuration
+- Enhanced database security with dedicated AdsvoidAdmin user
+- Flexible MySQL user management
 - Improved error handling for database operations
-- Added secure password input for MySQL configuration
+- Added privilege verification during setup
+- Security enhancements for database access
 
 ## Features
 - DNS-level ad blocking with caching system
@@ -63,8 +70,8 @@ A DNS-based ad-blocking system with a web dashboard for managing various systems
 ### Alternative Installation Methods
 If you're concerned about antivirus warnings, you can:
 1. Clone the repository and run from source
-2. ~~Build the executable yourself using build.py~~
-3. ~~Use portable version (if available)~~
+2. Build the executable yourself using build.py
+3. Use portable version (if available)
 
 ### Why Does This Happen?
 DNS manipulation software often triggers antivirus warnings because:
@@ -72,6 +79,8 @@ DNS manipulation software often triggers antivirus warnings because:
 - They intercept DNS queries
 - They require administrator privileges
 - They use system-level networking features
+
+Similar software like Pi-hole may trigger the same warnings. This is normal for this type of application.
 
 ## Verifying Your Download
 

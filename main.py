@@ -9,7 +9,7 @@ from datetime import datetime
 import socket
 import struct
 import config
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, url_for
 import signal
 import sys
 import logging
@@ -17,6 +17,9 @@ from logging.handlers import TimedRotatingFileHandler
 import os
 import psutil
 import math
+import hashlib
+import secrets
+import functools
 
 # Move DNSQuery class definition inside DNSServer to ensure it's accessible
 class DNSServer:
@@ -356,6 +359,232 @@ def setup_database():
     except mysql.connector.Error as err:
         print(f"Database setup error: {err}")
         return False
+    
+def init_auth_table():
+    """Create users table if it doesn't exist and add default admin user"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor()
+        
+        # Create users table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password_hash VARCHAR(128) NOT NULL,
+                is_admin BOOLEAN DEFAULT FALSE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Check if admin user exists
+        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+        if cursor.fetchone()[0] == 0:
+            # Create default admin user (username: admin, password: adsvoidadmin)
+            password_hash = hashlib.sha256("adsvoidadmin".encode()).hexdigest()
+            cursor.execute("""
+                INSERT INTO users (username, password_hash, is_admin)
+                VALUES (%s, %s, TRUE)
+            """, ("admin", password_hash))
+            print("Default admin user created")
+        
+        conn.commit()
+        conn.close()
+        return True
+    except mysql.connector.Error as err:
+        print(f"Auth setup error: {err}")
+        return False
+    
+def verify_user(username, password):
+    """Verify user credentials"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor(dictionary=True)
+        
+        # Get user
+        cursor.execute("""
+            SELECT id, username, password_hash, is_admin
+            FROM users
+            WHERE username = %s
+        """, (username,))
+        
+        user = cursor.fetchone()
+        conn.close()
+        
+        if user:
+            # Verify password
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            if password_hash == user['password_hash']:
+                return user
+        
+        return None
+    except mysql.connector.Error as err:
+        print(f"Login error: {err}")
+        return None
+    
+def update_admin_password():
+    """Update the admin password to the new default"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor()
+        
+        # Update admin password
+        password_hash = hashlib.sha256("adsvoidadmin".encode()).hexdigest()
+        cursor.execute("""
+            UPDATE users 
+            SET password_hash = %s
+            WHERE username = 'admin'
+        """, (password_hash,))
+        
+        if cursor.rowcount > 0:
+            print("Admin password updated to default")
+        else:
+            print("Admin user not found")
+            
+        conn.commit()
+        conn.close()
+        return True
+    except mysql.connector.Error as err:
+        print(f"Password update error: {err}")
+        return False
+    
+def admin_required(view):
+    """Decorator to require admin privileges for views"""
+    @functools.wraps(view)
+    def wrapped_view(**kwargs):
+        if not session.get('is_admin', False):
+            flash('Permission denied: Admin access required', 'error')
+            return redirect(url_for('dashboard'))
+        return view(**kwargs)
+    return wrapped_view
+    
+def login_required(view):
+    """Decorator to require login for views"""
+    @functools.wraps(view)
+    def wrapped_view(**kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return view(**kwargs)
+    return wrapped_view
+
+# user management functions
+def get_all_users():
+    """Get all users from database"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT id, username, is_admin, created_at
+            FROM users
+            ORDER BY id
+        """)
+        
+        users = cursor.fetchall()
+        conn.close()
+        return users
+    except mysql.connector.Error as err:
+        print(f"Error getting users: {err}")
+        return []
+
+def add_user(username, password, is_admin=False):
+    """Add a new user"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor()
+        
+        # Hash the password
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        cursor.execute("""
+            INSERT INTO users (username, password_hash, is_admin)
+            VALUES (%s, %s, %s)
+        """, (username, password_hash, is_admin))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except mysql.connector.Error as err:
+        print(f"Error adding user: {err}")
+        return False
+
+def delete_user(user_id):
+    """Delete a user"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor()
+        
+        # Don't allow deleting the admin user
+        cursor.execute("""
+            DELETE FROM users 
+            WHERE id = %s AND username != 'admin'
+        """, (user_id,))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+    except mysql.connector.Error as err:
+        print(f"Error deleting user: {err}")
+        return False
+
+def change_password(username, new_password):
+    """Change a user's password"""
+    try:
+        conn = mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+        cursor = conn.cursor()
+        
+        # Hash the password
+        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        
+        cursor.execute("""
+            UPDATE users 
+            SET password_hash = %s
+            WHERE username = %s
+        """, (password_hash, username))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+    except mysql.connector.Error as err:
+        print(f"Error changing password: {err}")
+        return False
 
 def parse_domain_line(line):
     """Parse a line from hosts file and extract domain, handling different formats"""
@@ -661,11 +890,13 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # Create the Flask web application
-app = Flask(__name__)
-
-# In main.py, replace the existing @app.route('/') function
+app = Flask(__name__, static_folder='static')
+app.secret_key = secrets.token_hex(16)  # Generate a random secret key
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # Session timeout in seconds (1 hour)
 
 @app.route('/')
+@login_required
 def dashboard():
     try:
         conn = mysql.connector.connect(
@@ -713,6 +944,7 @@ def dashboard():
                              system_stats=get_system_stats())
 
 @app.route('/sources')
+@login_required
 def list_sources():
     try:
         conn = mysql.connector.connect(
@@ -734,6 +966,8 @@ def list_sources():
         return f"Database error: {err}", 500
 
 @app.route('/sources/add', methods=['POST'])
+@login_required
+@admin_required
 def add_source():
     url = request.form.get('url')
     name = request.form.get('name', url)
@@ -742,6 +976,14 @@ def add_source():
         return "URL is required", 400
         
     try:
+        # Create db_config dictionary for this function
+        db_config = {
+            'host': config.DB_HOST,
+            'user': config.DB_USER,
+            'password': config.DB_PASSWORD,
+            'database': config.DB_NAME
+        }
+        
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         cursor.execute("""
@@ -762,8 +1004,18 @@ def add_source():
         return f"Database error: {err}", 500
 
 @app.route('/sources/delete/<int:source_id>', methods=['POST'])
+@login_required
+@admin_required
 def delete_source(source_id):
     try:
+        # Create db_config dictionary for this function
+        db_config = {
+            'host': config.DB_HOST,
+            'user': config.DB_USER,
+            'password': config.DB_PASSWORD,
+            'database': config.DB_NAME
+        }
+        
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         
@@ -773,9 +1025,22 @@ def delete_source(source_id):
         
         if source_info:
             name, url = source_info
+            
+            # Delete any domain associations first
+            cursor.execute("""
+                DELETE ds FROM domain_sources ds
+                JOIN blocklist_sources s ON ds.source_id = s.id
+                WHERE s.id = %s
+            """, (source_id,))
+            
+            # Now delete the source
+            cursor.execute("DELETE FROM blocklist_sources WHERE id = %s", (source_id,))
+            
+            conn.commit()
             log_source_action("DELETE", name, url)
             
-        # Rest of your delete logic...
+        conn.close()
+        return redirect(url_for('list_sources'))
         
     except mysql.connector.Error as err:
         if source_info:
@@ -783,8 +1048,18 @@ def delete_source(source_id):
         return f"Database error: {err}", 500
 
 @app.route('/sources/toggle/<int:source_id>', methods=['POST'])
+@login_required
+@admin_required
 def toggle_source(source_id):
     try:
+        # Create db_config dictionary for this function
+        db_config = {
+            'host': config.DB_HOST,
+            'user': config.DB_USER,
+            'password': config.DB_PASSWORD,
+            'database': config.DB_NAME
+        }
+        
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         
@@ -804,7 +1079,8 @@ def toggle_source(source_id):
         if source_info:
             new_state = "Enabled" if not source_info[2] else "Disabled"
             source_logger.info(f"Source {new_state} - Name: {source_info[0]}, URL: {source_info[1]}")
-            
+        
+        conn.close()
         return redirect(url_for('list_sources'))
     except mysql.connector.Error as err:
         source_logger.error(f"Error Toggling Source ID: {source_id}, Error: {str(err)}")
@@ -812,11 +1088,14 @@ def toggle_source(source_id):
 
 # Add this route to trigger cleanup manually
 @app.route('/sources/cleanup', methods=['POST'])
+@login_required
+@admin_required
 def trigger_cleanup():
     cleanup_domains()
     return redirect(url_for('list_sources'))
 
 @app.route('/logs')
+@login_required
 def view_logs():
     # Get search parameters
     date = request.args.get('date', '')
@@ -866,9 +1145,117 @@ def view_logs():
                              client_ip=client_ip,
                              log_type=log_type)
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        user = verify_user(username, password)
+        
+        if user:
+            session.clear()
+            session['logged_in'] = True
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['is_admin'] = user['is_admin']
+            
+            # Log successful login
+            print(f"User {username} logged in")
+            return redirect(url_for('dashboard'))
+        else:
+            error = "Invalid username or password"
+    
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    username = session.get('username', 'Unknown')
+    session.clear()
+    print(f"User {username} logged out")
+    return redirect(url_for('login'))
+
+# handle user management
+@app.route('/users')
+@login_required
+def list_users():
+    # Only admin can access user management
+    if not session.get('is_admin'):
+        flash('Permission denied: Admin access required', 'error')
+        return redirect(url_for('dashboard'))
+        
+    users = get_all_users()
+    return render_template('users.html', users=users)
+
+@app.route('/users/add', methods=['POST'])
+@login_required
+def user_add():
+    # Only admin can add users
+    if not session.get('is_admin'):
+        flash('Permission denied: Admin access required', 'error')
+        return redirect(url_for('dashboard'))
+    
+    username = request.form.get('username')
+    password = request.form.get('password')
+    is_admin = request.form.get('is_admin') == 'on'
+    
+    if not username or not password:
+        flash('Username and password are required', 'error')
+        return redirect(url_for('list_users'))
+    
+    if add_user(username, password, is_admin):
+        flash(f'User {username} added successfully', 'success')
+    else:
+        flash('Failed to add user', 'error')
+    
+    return redirect(url_for('list_users'))
+
+@app.route('/users/delete/<int:user_id>', methods=['POST'])
+@login_required
+def user_delete(user_id):
+    # Only admin can delete users
+    if not session.get('is_admin'):
+        flash('Permission denied: Admin access required', 'error')
+        return redirect(url_for('dashboard'))
+    
+    if delete_user(user_id):
+        flash('User deleted successfully', 'success')
+    else:
+        flash('Failed to delete user', 'error')
+    
+    return redirect(url_for('list_users'))
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password_route():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+        
+        # Verify current password
+        user = verify_user(session['username'], current_password)
+        
+        if not user:
+            flash('Current password is incorrect', 'error')
+            return redirect(url_for('change_password_route'))
+        
+        if new_password != confirm_password:
+            flash('New passwords do not match', 'error')
+            return redirect(url_for('change_password_route'))
+        
+        if change_password(session['username'], new_password):
+            flash('Password changed successfully', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Failed to change password', 'error')
+    
+    return render_template('change_password.html')
 
 
 @app.route('/api/stats')
+@login_required
 def get_stats():
     try:
         conn = mysql.connector.connect(
@@ -917,6 +1304,8 @@ if __name__ == "__main__":
     dns_logger, source_logger = setup_logging()
 
     if setup_database():
+        init_auth_table()
+        update_admin_password()  # Add this line to update the admin password
         print("Initial blocklist update starting...")
         update_blocklist()
         

@@ -7,3 +7,6 @@ DB_NAME = "adsvoid"        # This will be our database name
 
 # Web dashboard settings
 WEB_PORT = 5000  # The port where your dashboard will run
+
+# Add to config.py
+SESSION_SECRET = "sbN8qcrOGW"  # Replace with a strong random key in production

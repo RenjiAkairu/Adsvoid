@@ -1,0 +1,113 @@
+<!-- navbar.html -->
+<div class="navbar">
+    <div class="navbar-brand">
+        <a href="/">
+            <img src="{{ url_for('static', filename='AdsvoidLogoColorful1.png') }}" alt="Adsvoid Ad-Block" class="logo-image">
+        </a>
+    </div>
+    <div class="navbar-links">
+        <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
+        <a href="/sources" class="nav-link {% if request.path == '/sources' %}active{% endif %}">Sources</a>
+        <a href="/logs" class="nav-link {% if request.path == '/logs' %}active{% endif %}">Logs</a>
+    </div>
+    <div class="navbar-user">
+        {% if session.logged_in %}
+        <div class="dropdown">
+            <span class="username">{{ session.username }}</span>
+            <div class="dropdown-content">
+                <a href="/change-password">Change Password</a>
+                {% if session.is_admin %}
+                <a href="/users">Manage Users</a>
+                {% endif %}
+            </div>
+        </div>
+        <a href="/logout" class="nav-link">Logout</a>
+        {% else %}
+        <a href="/login" class="nav-link">Login</a>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .navbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #343a40;
+        color: white;
+        padding: 10px 20px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+    }
+    
+    .navbar-brand {
+        font-weight: bold;
+        font-size: 1.2em;
+    }
+
+    .logo-image {
+        height: 40px;
+    }
+    
+    .navbar-links {
+        display: flex;
+    }
+    
+    .nav-link {
+        color: white;
+        text-decoration: none;
+        padding: 8px 15px;
+        margin: 0 5px;
+        border-radius: 4px;
+    }
+    
+    .nav-link:hover {
+        background-color: #495057;
+    }
+    
+    .nav-link.active {
+        background-color: #007bff;
+    }
+    
+    .navbar-user {
+        display: flex;
+        align-items: center;
+    }
+    
+    .username {
+        margin-right: 15px;
+        font-style: italic;
+    }
+
+    .dropdown {
+        position: relative;
+        display: inline-block;
+        cursor: pointer;
+    }
+    
+    .dropdown-content {
+        display: none;
+        position: absolute;
+        background-color: #343a40;
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+        z-index: 1;
+        border-radius: 4px;
+    }
+    
+    .dropdown-content a {
+        color: white;
+        padding: 12px 16px;
+        text-decoration: none;
+        display: block;
+        border-radius: 0;
+    }
+    
+    .dropdown-content a:hover {
+        background-color: #495057;
+    }
+    
+    .dropdown:hover .dropdown-content {
+        display: block;
+    }
+</style>

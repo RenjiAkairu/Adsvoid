@@ -65,9 +65,10 @@
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-link">← Back to Dashboard</a>
+        {% include 'navbar.html' %}
         <h1>Manage Blocklist Sources</h1>
         
+        {% if session.is_admin %}
         <div class="source-form">
             <h2>Add New Source</h2>
             <form action="/sources/add" method="POST">
@@ -82,8 +83,7 @@
                 <button type="submit" class="btn">Add Source</button>
             </form>
         </div>
-
-        <!-- Add this right after the "Add Source" form in sources.html -->
+    
         <div class="management-actions" style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
             <h3>Database Management</h3>
             <form action="/sources/cleanup" method="POST" style="display: inline;">
@@ -92,7 +92,8 @@
                 </button>
             </form>
         </div>
-
+        {% endif %}
+    
         <div class="source-list">
             <h2>Current Sources</h2>
             {% for source in sources %}
@@ -104,6 +105,8 @@
                 <p>Last Update: {{ source.last_update }}</p>
                 <p>Total Domains: {{ source.total_domains }}</p>
                 {% endif %}
+                
+                {% if session.is_admin %}
                 <div class="source-actions">
                     <form style="display: inline" action="/sources/toggle/{{ source.id }}" method="POST">
                         <button type="submit" class="btn">
@@ -114,6 +117,7 @@
                         <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
                     </form>
                 </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>
