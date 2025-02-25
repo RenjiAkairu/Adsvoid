@@ -177,7 +177,7 @@ The setup script will:
 
 If you need to manually configure the database user:
 ```sql
-CREATE USER 'AdsvoidAdmin'@'localhost' IDENTIFIED BY '@AD-BlockMaster01';
+CREATE USER 'AdsvoidAdmin'@'localhost' IDENTIFIED BY '@AD-BlockAdmin321';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, 
       REFERENCES, TRIGGER, EVENT ON adsvoid.* TO 'AdsvoidAdmin'@'localhost';
 FLUSH PRIVILEGES;
