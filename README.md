@@ -2,7 +2,7 @@
 
 A DNS-based ad-blocking system similar to Pi-hole, with a web dashboard for managing various systems and monitoring DNS traffic.
 
-## What's New In Release (1.2.0) Features
+## [Pre-release] What's New In Release (1.2.0) Features
 - Added secure authentication system with login protection
 - Implemented role-based access control (admin and viewer roles)
 - Added user management interface for administrators
@@ -12,7 +12,7 @@ A DNS-based ad-blocking system similar to Pi-hole, with a web dashboard for mana
 - Enhanced security with session management
 - Improved source management with permission controls
 
-## Previous Release (1.1.0) Features
+## [Pre-release] Previous Release (1.1.0) Features
 - Interactive MySQL credential configuration
 - Enhanced database security with dedicated AdsvoidAdmin user
 - Flexible MySQL user management
